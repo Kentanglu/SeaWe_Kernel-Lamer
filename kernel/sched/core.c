@@ -866,11 +866,14 @@ static inline unsigned int get_opp_capacity(struct cpufreq_policy *policy,
 
 void init_opp_capacity_tbl(void)
 {
-	if (task_on_rq_migrating(p))
-		flags |= ENQUEUE_MIGRATED;
-
-	if (task_contributes_to_load(p))
-		rq->nr_uninterruptible--;
+	int cpu, cid, prev_cid = -1;
+	int count = 0;
+	int i, idx = 0;
+	unsigned int cap;
+	struct sched_domain *sd;
+	struct sched_group *sg;
+	const struct sched_group_energy *sge;
+	struct cpufreq_policy *policy;
 
 	count = system_opp_count();
 	if (count < 0)
@@ -1952,6 +1955,9 @@ static inline void dequeue_task(struct rq *rq, struct task_struct *p, int flags)
 
 void activate_task(struct rq *rq, struct task_struct *p, int flags)
 {
+	if (task_on_rq_migrating(p))
+		flags |= ENQUEUE_MIGRATED;
+
 	if (task_contributes_to_load(p))
 		rq->nr_uninterruptible--;
 
@@ -6183,14 +6189,14 @@ SYSCALL_DEFINE3(sched_getaffinity, pid_t, pid, unsigned int, len,
 	if (len & (sizeof(unsigned long)-1))
 		return -EINVAL;
 
-	if (!alloc_cpumask_var(&mask, GFP_KERNEL))
+	if (!zalloc_cpumask_var(&mask, GFP_KERNEL))
 		return -ENOMEM;
 
 	ret = sched_getaffinity(pid, mask);
 	if (ret == 0) {
 		size_t retlen = min_t(size_t, len, cpumask_size());
 
-		if (copy_to_user(user_mask_ptr, mask, retlen))
+		if (copy_to_user(user_mask_ptr, cpumask_bits(mask), retlen))
 			ret = -EFAULT;
 		else
 			ret = retlen;
@@ -6524,26 +6530,9 @@ SYSCALL_DEFINE2(sched_rr_get_interval, pid_t, pid,
 	retval = copy_to_user(interval, &t, sizeof(t)) ? -EFAULT : 0;
 	return retval;
 
-	if ((len * BITS_PER_BYTE) < nr_cpu_ids)
-		return -EINVAL;
-	if (len & (sizeof(unsigned long)-1))
-		return -EINVAL;
-
-	if (!zalloc_cpumask_var(&mask, GFP_KERNEL))
-		return -ENOMEM;
-
-	ret = sched_getaffinity(pid, mask);
-	if (ret == 0) {
-		size_t retlen = min_t(size_t, len, cpumask_size());
-
-		if (copy_to_user(user_mask_ptr, cpumask_bits(mask), retlen))
-			ret = -EFAULT;
-		else
-			ret = retlen;
-	}
-	free_cpumask_var(mask);
-
-	return ret;
+out_unlock:
+	rcu_read_unlock();
+	return retval;
 }
 
 void sched_show_task(struct task_struct *p)
